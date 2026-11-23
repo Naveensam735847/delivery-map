@@ -1,0 +1,3 @@
+<resources>
+    <string name="service_desc">Reads the pickup and drop address from Rapido and Porter order popups and shows them on a small map below the popup. It does not click anything.</string>
+</resources>
