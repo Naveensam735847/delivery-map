@@ -4,12 +4,12 @@ import org.json.JSONObject
 
 object Router {
     /** Real road route through the points (OSRM public server, free). Null if it fails. */
-    suspend fun route(points: List<LatLng>): List<LatLng>? {
+    suspend fun route(points: List<LatLng>, timeoutMs: Int = 8000): List<LatLng>? {
         if (points.size < 2) return null
         val coords = points.joinToString(";") { "${it.lng},${it.lat}" }
         val body = Net.get(
             "https://router.project-osrm.org/route/v1/driving/$coords?overview=simplified&geometries=geojson",
-            8000
+            timeoutMs
         ) ?: return null
         return try {
             val routes = JSONObject(body).getJSONArray("routes")

@@ -20,12 +20,13 @@ object Geocoder {
     private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")
 
     /** Photon (free, OpenStreetMap data). All queries run in parallel. */
-    suspend fun photonAll(queries: List<String>, ref: LatLng): List<Cand> = coroutineScope {
+    suspend fun photonAll(queries: List<String>, ref: LatLng, timeoutMs: Int = 6000): List<Cand> = coroutineScope {
         queries.mapIndexed { qi, q ->
             async {
                 val out = ArrayList<Cand>()
                 val body = Net.get(
-                    "https://photon.komoot.io/api/?q=${enc(q)}&limit=5&lat=${ref.lat}&lon=${ref.lng}"
+                    "https://photon.komoot.io/api/?q=${enc(q)}&limit=5&lat=${ref.lat}&lon=${ref.lng}",
+                    timeoutMs
                 )
                 if (body != null) {
                     try {
@@ -43,7 +44,7 @@ object Geocoder {
     }
 
     /** Nominatim (1 request per second rule). Returns candidates of the first query that has any. */
-    suspend fun nominatimFirst(queries: List<String>, ref: LatLng): List<Cand> {
+    suspend fun nominatimFirst(queries: List<String>, ref: LatLng, timeoutMs: Int = 6000): List<Cand> {
         for ((qi, q) in queries.take(3).withIndex()) {
             val body = nominatimLock.withLock {
                 val wait = 1100 - (System.currentTimeMillis() - lastNominatim)
@@ -51,7 +52,8 @@ object Geocoder {
                 val r = Net.get(
                     "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&countrycodes=in" +
                         "&viewbox=${ref.lng - 0.8},${ref.lat + 0.8},${ref.lng + 0.8},${ref.lat - 0.8}" +
-                        "&q=${enc(q)}"
+                        "&q=${enc(q)}",
+                    timeoutMs
                 )
                 lastNominatim = System.currentTimeMillis()
                 r
@@ -74,7 +76,7 @@ object Geocoder {
 }
 
 object AddressQueries {
-    fun build(title: String, address: String): List<String> {
+    fun build(title: String, address: String, max: Int = 4): List<String> {
         val truncated = address.contains("…") || address.trim().endsWith("...")
         var a = address.replace("…", "").replace("...", "")
         PlusCode.find(a)?.let { a = a.uppercase().replace(it, "") }
@@ -88,6 +90,6 @@ object AddressQueries {
         if (noNum.size != segs.size && noNum.isNotEmpty()) list.add(noNum.joinToString(", "))
         if (noNum.size > 3) list.add(noNum.takeLast(4).joinToString(", "))
         if (title.isNotBlank()) list.add((title + " " + noNum.takeLast(3).joinToString(" ")).trim())
-        return list.distinct().filter { it.isNotBlank() }.take(4)
+        return list.distinct().filter { it.isNotBlank() }.take(max)
     }
 }

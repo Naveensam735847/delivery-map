@@ -13,6 +13,7 @@ import android.view.ViewGroup
 import android.view.ViewOutlineProvider
 import android.view.WindowManager
 import android.widget.FrameLayout
+import android.widget.TextView
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.BoundingBox
@@ -22,12 +23,18 @@ import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Overlay
 import org.osmdroid.views.overlay.Polyline
 import java.io.File
+import kotlin.math.abs
 
-/** Small non-touchable map window shown under the delivery popup. */
+/** Small map window under the delivery popup. Only the X button is touchable. */
 class MapOverlay(private val svc: AccessibilityService) {
     private val wm = svc.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private var root: FrameLayout? = null
     private var map: MapView? = null
+    private var closeView: TextView? = null
+    private var frameLp: WindowManager.LayoutParams? = null
+    private var closeLp: WindowManager.LayoutParams? = null
+
+    var onClose: (() -> Unit)? = null
 
     private var me: LatLng? = null
     private var pickup: Place? = null
@@ -37,6 +44,9 @@ class MapOverlay(private val svc: AccessibilityService) {
     val isShowing: Boolean get() = root != null
 
     private fun dp(v: Int) = (v * svc.resources.displayMetrics.density).toInt()
+    private val screenH get() = svc.resources.displayMetrics.heightPixels
+    private val margin get() = dp(12)
+    private val closeSize get() = dp(46)
 
     init {
         val cfg = Configuration.getInstance()
@@ -48,13 +58,18 @@ class MapOverlay(private val svc: AccessibilityService) {
         cfg.tileFileSystemCacheTrimBytes = 90L * 1024 * 1024
     }
 
-    fun show() {
+    private fun clampTop(top: Int): Int = minOf(top, screenH - dp(56) - dp(160))
+
+    private fun heightFor(top: Int): Int {
+        val avail = screenH - top - dp(56)
+        return avail.coerceIn(dp(160), (screenH * 0.42).toInt())
+    }
+
+    fun show(top: Int) {
         if (root != null) return
         val dm = svc.resources.displayMetrics
-        val margin = dp(12)
         val w = dm.widthPixels - margin * 2
-        val h = (dm.heightPixels * 0.40).toInt()
-        val top = (dm.heightPixels * 0.47).toInt()
+        val t = clampTop(top)
 
         val mv = MapView(svc).apply {
             setTileSource(TileSourceFactory.MAPNIK)
@@ -63,7 +78,7 @@ class MapOverlay(private val svc: AccessibilityService) {
             isTilesScaledToDpi = true
             minZoomLevel = 4.0
             maxZoomLevel = 19.0
-            controller.setZoom(14.0)
+            controller.setZoom(15.0)
             controller.setCenter(GeoPoint(13.0827, 80.2707))
         }
         val bg = GradientDrawable().apply {
@@ -77,26 +92,60 @@ class MapOverlay(private val svc: AccessibilityService) {
             outlineProvider = ViewOutlineProvider.BACKGROUND
             addView(mv, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         }
-        val lp = WindowManager.LayoutParams(
-            w, h,
+        val flp = WindowManager.LayoutParams(
+            w, heightFor(t),
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            x = margin
-            y = top
+        ).apply { gravity = Gravity.TOP or Gravity.START; x = margin; y = t }
+
+        val close = TextView(svc).apply {
+            text = "✕"
+            textSize = 20f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.parseColor("#D9000000"))
+                setStroke(dp(2), Color.WHITE)
+            }
+            setOnClickListener { onClose?.invoke() }
         }
+        val clp = WindowManager.LayoutParams(
+            closeSize, closeSize,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply { gravity = Gravity.TOP or Gravity.START; x = margin + w - closeSize - dp(8); y = t + dp(8) }
+
         try {
-            wm.addView(frame, lp)
-            root = frame
-            map = mv
+            wm.addView(frame, flp)
+            wm.addView(close, clp)
+            root = frame; map = mv; closeView = close; frameLp = flp; closeLp = clp
         } catch (e: Exception) {
-            root = null
-            map = null
+            try { wm.removeView(frame) } catch (_: Exception) {}
+            root = null; map = null; closeView = null; frameLp = null; closeLp = null
         }
+    }
+
+    /** Moves the map window (used when the delivery popup is higher or lower). */
+    fun setTop(top: Int) {
+        val r = root ?: return
+        val c = closeView ?: return
+        val flp = frameLp ?: return
+        val clp = closeLp ?: return
+        val t = clampTop(top)
+        if (abs(t - flp.y) < dp(6)) return
+        flp.y = t
+        flp.height = heightFor(t)
+        clp.y = t + dp(8)
+        try {
+            wm.updateViewLayout(r, flp)
+            wm.updateViewLayout(c, clp)
+        } catch (_: Exception) {}
+        map?.let { mv -> mv.post { fit(mv) } }
     }
 
     fun clear() {
@@ -111,9 +160,9 @@ class MapOverlay(private val svc: AccessibilityService) {
 
     fun hide() {
         root?.let { try { wm.removeView(it) } catch (_: Exception) {} }
+        closeView?.let { try { wm.removeView(it) } catch (_: Exception) {} }
         try { map?.onDetach() } catch (_: Exception) {}
-        root = null
-        map = null
+        root = null; map = null; closeView = null; frameLp = null; closeLp = null
         me = null; pickup = null; drop = null; route = null
     }
 
@@ -158,7 +207,7 @@ class MapOverlay(private val svc: AccessibilityService) {
                 mv.controller.setZoom(16.0)
                 mv.controller.setCenter(bb.centerWithDateLine)
             } else {
-                mv.zoomToBoundingBox(bb, false, dp(36))
+                mv.zoomToBoundingBox(bb, false, dp(40))
             }
         }
     }

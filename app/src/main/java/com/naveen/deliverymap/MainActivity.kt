@@ -12,11 +12,15 @@ import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
+import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.RadioButton
+import android.widget.RadioGroup
 import android.widget.ScrollView
+import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 
@@ -38,13 +42,64 @@ class MainActivity : Activity() {
             setPadding(dp(16), dp(24), dp(16), dp(24))
         }
         fun title(t: String) = TextView(this).apply { text = t; textSize = 22f; setPadding(0, 0, 0, dp(8)) }
-        fun label(t: String) = TextView(this).apply { text = t; textSize = 14f; setPadding(0, dp(12), 0, dp(4)) }
+        fun label(t: String) = TextView(this).apply { text = t; textSize = 14f; setPadding(0, dp(16), 0, dp(4)) }
         fun btn(t: String, a: () -> Unit) = Button(this).apply { text = t; isAllCaps = false; setOnClickListener { a() } }
 
         col.addView(title("Delivery Map"))
-        status = TextView(this).apply { textSize = 15f; setPadding(0, 0, 0, dp(8)) }
+
+        // ----- main ON / OFF -----
+        col.addView(Switch(this).apply {
+            text = "App ON / OFF"
+            textSize = 20f
+            isChecked = Prefs.enabled(this@MainActivity)
+            setPadding(0, dp(8), 0, dp(8))
+            setOnCheckedChangeListener { _, on ->
+                Prefs.setEnabled(this@MainActivity, on)
+                Toast.makeText(this@MainActivity, if (on) "App ON" else "App OFF - stopped completely", Toast.LENGTH_SHORT).show()
+            }
+        })
+
+        status = TextView(this).apply { textSize = 15f; setPadding(0, dp(8), 0, dp(8)) }
         col.addView(status)
 
+        // ----- speed mode -----
+        col.addView(label("Speed"))
+        val modes = listOf(
+            "ultra" to "Ultra fast: you + drop, straight line",
+            "fast" to "Fast: you + drop, road route",
+            "normal" to "Normal: you + pickup + drop, road route"
+        )
+        val modeGroup = RadioGroup(this)
+        modes.forEach { (k, t) ->
+            modeGroup.addView(RadioButton(this).apply {
+                text = t; id = View.generateViewId(); tag = k
+                isChecked = Prefs.mode(this@MainActivity) == k
+            })
+        }
+        modeGroup.setOnCheckedChangeListener { g, id ->
+            val k = g.findViewById<RadioButton>(id)?.tag as? String ?: return@setOnCheckedChangeListener
+            Prefs.setMode(this, k)
+        }
+        col.addView(modeGroup)
+
+        // ----- gap -----
+        col.addView(label("Gap between delivery popup and map"))
+        val gaps = listOf(0.5f to "0.5 inch", 1.0f to "1 inch", 1.5f to "1.5 inch")
+        val gapGroup = RadioGroup(this).apply { orientation = LinearLayout.HORIZONTAL }
+        gaps.forEach { (v, t) ->
+            gapGroup.addView(RadioButton(this).apply {
+                text = t; id = View.generateViewId(); tag = v
+                isChecked = Prefs.gapInch(this@MainActivity) == v
+                setPadding(0, 0, dp(12), 0)
+            })
+        }
+        gapGroup.setOnCheckedChangeListener { g, id ->
+            val v = g.findViewById<RadioButton>(id)?.tag as? Float ?: return@setOnCheckedChangeListener
+            Prefs.setGapInch(this, v)
+        }
+        col.addView(gapGroup)
+
+        // ----- setup -----
         col.addView(label("Setup (do once, in order)"))
         col.addView(btn("1. Allow location (choose 'Allow all the time')") { askLocation() })
         col.addView(btn("2. Turn on Accessibility service") {
@@ -87,7 +142,8 @@ class MainActivity : Activity() {
             checkSelfPermission(Manifest.permission.ACCESS_BACKGROUND_LOCATION) == PackageManager.PERMISSION_GRANTED
         val svc = DeliveryAccessibilityService.instance != null
         fun mark(b: Boolean) = if (b) "✅" else "❌"
-        status.text = "${mark(fine)} Location\n" +
+        status.text = "${mark(Prefs.enabled(this))} App is ${if (Prefs.enabled(this)) "ON" else "OFF"}\n" +
+            "${mark(fine)} Location\n" +
             "${mark(bg)} Location all the time\n" +
             "${mark(svc)} Accessibility service running\n\n" +
             "Last read: ${DeliveryAccessibilityService.lastInfo}" +

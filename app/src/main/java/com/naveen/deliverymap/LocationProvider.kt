@@ -52,6 +52,12 @@ class LocationProvider(private val ctx: Context) {
         running = false
     }
 
+    /** Instant answer: last known location (max 10 min old), no waiting. */
+    fun quick(): LatLng? {
+        val c = current ?: return null
+        return if (System.currentTimeMillis() - c.time < 600_000) LatLng(c.latitude, c.longitude) else null
+    }
+
     /** Waits briefly for a fresh fix; falls back to the last known one (max 10 min old). */
     suspend fun get(timeoutMs: Long): LatLng? {
         val t0 = System.currentTimeMillis()
